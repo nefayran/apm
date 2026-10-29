@@ -113,3 +113,56 @@ def test_audit_replay_preserves_root_local_hook_marker_without_phantom_drift(
     targets = resolve_targets(project, explicit_target=["codex"])
     findings = diff_scratch_against_project(scratch_root, project, lockfile, targets)
     assert findings == []
+
+
+def _write_root_hook_only_project(project: Path) -> None:
+    """Root ships only an inline hook; a local package ships another (#3369)."""
+    project.mkdir()
+    (project / "apm.yml").write_bytes(
+        b"name: consumer\nversion: 1.0.0\ntargets: [claude]\nincludes: auto\n"
+        b"dependencies:\n  apm:\n    - ./package\n"
+    )
+    root_hooks = project / ".apm" / "hooks"
+    root_hooks.mkdir(parents=True)
+    (root_hooks / "root.json").write_bytes(
+        b'{"PreToolUse":[{"hooks":[{"type":"command","command":"echo root"}]}]}\n'
+    )
+    package_hooks = project / "package" / ".apm" / "hooks"
+    package_hooks.mkdir(parents=True)
+    (project / "package" / "apm.yml").write_bytes(b"name: package\nversion: 1.0.0\n")
+    (package_hooks / "dependency.json").write_bytes(
+        b'{"PostToolUse":[{"hooks":[{"type":"command","command":"echo dependency"}]}]}\n'
+    )
+
+
+@pytest.mark.integration
+def test_audit_replay_keeps_root_hooks_without_standalone_local_files(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Root hooks merged into shared files are replayed, so a clean install has no drift."""
+    project = tmp_path / "consumer"
+    _write_root_hook_only_project(project)
+    _install(project, monkeypatch)
+
+    lockfile_path = get_lockfile_path(project)
+    lockfile = LockFile.read(lockfile_path)
+    assert lockfile is not None
+    # The root deploys no standalone file, so the lockfile records no local files.
+    assert lockfile.local_deployed_files == []
+    settings = (project / ".claude" / "settings.json").read_text(encoding="utf-8")
+    assert "echo root" in settings
+    assert "echo dependency" in settings
+
+    scratch_root = run_replay(
+        ReplayConfig(
+            project_root=project,
+            lockfile_path=lockfile_path,
+            targets=frozenset({"claude"}),
+        ),
+        CheckLogger(verbose=False),
+    )
+
+    targets = resolve_targets(project, explicit_target=["claude"])
+    findings = diff_scratch_against_project(scratch_root, project, lockfile, targets)
+    assert findings == []

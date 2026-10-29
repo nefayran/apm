@@ -525,9 +525,10 @@ def run_replay(config: ReplayConfig, logger: CheckLogger) -> Path:
     CacheMissError
         Surfaced verbatim when a locked dep cannot be materialized.
     """
-    from apm_cli.deps.lockfile import _SELF_KEY, LockFile
+    from apm_cli.deps.lockfile import _SELF_KEY, LockedDependency, LockFile
     from apm_cli.install.audit_target_roots import replay_modules_root, replay_target
     from apm_cli.install.native_plugin_admission import verify_native_plugin_cache
+    from apm_cli.install.phases.local_content import _project_has_root_primitives
     from apm_cli.install.project_package import build_project_local_package_info
     from apm_cli.install.services import IntegratorBundle, integrate_package_primitives
     from apm_cli.integration.targets import resolve_audit_targets
@@ -543,6 +544,22 @@ def run_replay(config: ReplayConfig, logger: CheckLogger) -> Path:
         raise CacheMissError(f"lockfile at {config.lockfile_path} is empty or unreadable")
 
     project_root = config.project_root.resolve()
+    if (
+        _SELF_KEY not in lock.dependencies
+        and not config.user_scope
+        and _project_has_root_primitives(project_root)
+    ):
+        # Install integrates the project's own .apm/ content whenever the
+        # directory exists, but the lockfile synthesizes the self-entry only
+        # from standalone local files. Root hooks merged into shared hook
+        # files leave none, so replay the local content anyway (#3369).
+        lock.dependencies[_SELF_KEY] = LockedDependency(
+            repo_url="<self>",
+            source="local",
+            local_path=".",
+            is_dev=True,
+            depth=0,
+        )
     scratch_root = (
         config.scratch_root.resolve()
         if config.scratch_root is not None

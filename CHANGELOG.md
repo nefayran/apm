@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `apm audit --ci` replays a project's own `.apm/` hooks when they deploy no standalone file, so a clean install no longer reports drift on `.claude/settings.json` and `.claude/apm-hooks.json`. (by @nefayran, closes #3369)
+
 ## [0.35.0] - 2026-10-22
 
 ### Added
